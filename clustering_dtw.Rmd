@@ -1,0 +1,222 @@
+---
+title: "Untitled"
+author: '9240'
+date: "08/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(reshape2)
+library(reshape)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(tibble)
+library(zoo)
+library(TSclust)
+library(dtwclust)
+library(data.table)
+```
+
+### Load Data
+```{r}
+data <- read.csv(file="./data/data_all_999.csv")
+```
+
+## MV Clustering on My Data
+
+```{r}
+get_var <- function(varnum, i_group=NA) {
+  data_1 <- data[data$varnum==varnum,]
+  if (is.na(i_group)) {
+    # do nothing
+    # print("Not filtering by income")
+  } else {
+    data_1 <- data_1[data_1$income==i_group,]
+  }
+
+  drops <- c("varnum")
+  data_1 <- data_1[ , !(names(data_1) %in% drops)]
+  data_1 <- data_1[order(data_1$iso3, data_1$year),]
+  rownames(data_1) <- NULL
+  return(data_1)
+}
+
+d_fruits <- get_var(1)
+```
+
+Now let's try with Nutritional+DALY
+```{r}
+data <- read.csv("./data/data_all_999.csv")
+```
+
+
+# MV on Output
+```{r}
+fruits <- get_var(1)
+def <- get_var(100)
+
+fruits$median_def <- def$median
+names(fruits)[names(fruits) == 'median'] <- 'median_fruits'
+
+#scale
+fruits$median_fruits <- scale(fruits$median_fruits)
+fruits$median_def <- scale(fruits$median_def)
+
+multi_ts <- split(fruits[,c('median_fruits', 'median_def')], fruits$iso3)
+
+mvc <- tsclust(multi_ts, k = 5, distance = "dtw_basic", seed = 390,
+args = tsclust_args(dist = list(sigma = 100)))
+# Note how the variables of each series are appended one after the other in the plot
+plot(mvc)
+```
+
+
+```{r}
+# mv_ts <- function(a,b, i_group=NA) {
+#   ts_a <- get_var(a, i_group)
+#   ts_b <- get_var(b, i_group)
+#   print(ts_a)
+#   
+#   ts_a$median_ts_b <- ts_b$median
+#   names(ts_a)[names(ts_a) == 'median'] <- 'median_ts_a'
+#   
+#   # scale
+#   ts_a$median_ts_a <- scale(ts_a$median_ts_a)
+#   ts_a$median_ts_b <- scale(ts_a$median_ts_b)
+#   
+#   multi_ts <- split(ts_a[,c('median_ts_a', 'median_ts_b')], ts_a$iso3)
+#   
+#   mvc <- tsclust(multi_ts, k=4, distance = "dtw_basic", seed = 390,
+#   args = tsclust_args(dist = list(sigma = 100)))
+#   # Note how the variables of each series are appended one after the other in the plot
+#   plot(mvc)
+# }
+# 
+# mv_ts(1, 100, 1)
+```
+Low + High together to see if we can differentiate - color low and high groups
+
+
+## Clustering High vs Low
+# DTWclust
+
+```{r}
+resc = NA
+
+mv_incomes <- function(data, varnums, incomes) {
+  df <- data
+  df <- df[df$income %in% incomes,]
+  print(length(unique(df$iso3)))
+  df <- df[df$varnum %in% varnums,]
+  print(length(unique(df$iso3)))
+
+  # some reshape
+  df <- reshape(
+    df,
+    timevar = "varnum", 
+    idvar = c("iso3", "year", "income"), 
+    direction = "wide"
+  )
+  print(length(unique(df$iso3)))
+  
+  # scale
+  colnames <- c()
+  for (varnum in varnums) {
+    colname <- paste("median.", as.character(varnum), sep="")
+    df[,colname] <- scale(df[,colname])
+    
+    colnames <- c(colnames, colname)
+  }
+  
+  
+
+  # split (each country into separate sub df)
+  df_split <- split(df[,colnames], df$iso3)
+  
+  # mvc
+  mvc <- tsclust(
+    df_split, 
+    k=length(incomes),
+    distance = "dtw_basic", 
+    seed = 390,
+    args = tsclust_args(dist = list(sigma = 100))
+  )
+  # this creates a PartitionalTSClusters S4 object
+  
+  # plot own graph with custom colors
+  plot(mvc)
+  print("plotted")
+  resc <- mvc@cluster
+  resc <- as.data.frame(resc)
+  rownames(resc) <- unique(df$iso3)
+
+  # retrieve actual income values
+  resc$income <- NA
+  for(country in rownames(resc)) {
+     resc[country,]$income <- data[data$iso3==country,]$income[1]
+  }
+  resc[resc$income==3,]$income <- 2
+  
+  resc$not_equal <- NA
+  resc$not_equal <- resc$resc==resc$income
+
+  # results
+  cf <- confusionMatrix(as.factor(resc$resc), as.factor(resc$income))
+  # cf <- confusionMatrix(as.factor(resc$resc), as.factor(resc$income))
+  resList <- list("cf" = cf, "df" = resc, "mvc"=mvc, "df_split"=df_split, "df_main"=df)
+  return(resList)
+}
+
+data <- read.csv(file="data/data_all_999.csv")
+test <- mv_incomes(data, c(18, 4, 100), c(1,3))
+test$cf
+```
+
+
+
+
+```{r}
+source("utils.R", local = knitr::knit_global())
+get_results(as.factor(test$df$resc), as.factor(test$df$income))
+```
+# test female male
+```{r}
+data <- read.csv(file="data/data_female_0.csv")
+results <- mv_incomes(data, c(18, 4, 100), c(1,3))
+get_results(as.factor(results$df$resc), as.factor(results$df$income))
+```
+
+```{r}
+data_f <- read.csv(file="data/data_female_1.csv")
+results <- mv_incomes(data_f, c(18, 4, 100), c(1,3))
+get_results(as.factor(results$df$resc), as.factor(results$df$income))
+```
+
+
+```{r}
+data_f <- read.csv(file="data/data_age_62.5.csv")
+results <- mv_incomes(data_f, c(18, 4, 100), c(1,3))
+get_results(as.factor(results$df$resc), as.factor(results$df$income))
+```
+
+
+```{r}
+data_f <- read.csv(file="data/data_age_22.5.csv")
+results <- mv_incomes(data_f, c(18, 4, 100), c(1,3))
+get_results(as.factor(results$df$resc), as.factor(results$df$income))
+```
+# Now try with DTW clust as part of Utils.R function
+```{r}
+source("utils.R", local = knitr::knit_global())
+library("TSclust")
+data <- select_data("all_999", c(3,6), c(100, 8, 4, 6, 9, 10))
+result <- clusterdtw(data, k=2)
+get_results(result$result, result$income)
+```

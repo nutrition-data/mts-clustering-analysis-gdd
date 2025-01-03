@@ -1,0 +1,100 @@
+---
+output: pdf_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(reshape2)
+library(reshape)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(tibble)
+library(zoo)
+```
+
+### Load Data
+```{r}
+data <- read.csv(file="./data/data_all_999.csv")
+
+# unique(data$varnum)
+```
+
+
+List of iso3s
+```{r}
+countries = unique(data$iso3)
+```
+
+Reduce to certain variables
+```{r}
+data_1 <- data[data$varnum=='57',]
+drops <- c("varnum")
+#data_1 <- data_1[data_1$iso3 %in% countries[1:50],] # only these countries
+data_1 <- data_1[ , !(names(data_1) %in% drops)]
+head(data_1)
+```
+### Line Graphs
+Plot all...
+```{r}
+ggplot(data=data_1, aes(x=year, y=median, group=iso3, color=as.factor(income))) + # colour=iso3 could make color income group
+    geom_line(alpha=0.5)
+```
+Now by income group
+```{r}
+ggplot(data=data_1, aes(x=year, y=median, group=iso3, colour=as.factor(income))) + # colour=iso3 could make color income group
+    geom_line(alpha=0.2)
+```
+
+
+Create function for this:
+```{r}
+plot_var <- function(varnum) {
+  data_1 <- data[data$varnum==varnum,]
+  drops <- c("varnum")
+  data_1 <- data_1[ , !(names(data_1) %in% drops)]
+  
+  #data_1 <- data_1[data_1$iso3 %in% countries[1:50],] # only these countries
+  ggplot(data=data_1, aes(x=year, y=median, group=iso3, colour=as.factor(income))) + # colour=iso3 could make color income group
+  geom_line(alpha=0.2) +
+  guides(colour = guide_legend(override.aes = list(alpha = 1)))
+}
+plot_var('1') # Fruits
+```
+
+```{r}
+plot_var('3') # potatoes
+```
+
+```{r}
+plot_var('41') # potassium
+```
+```{r}
+plot_var('30') # seafood omega-3 fat
+```
+As expected, this variable not as associated to income group as other variables. Perhaps greater association to geography (e.g. seaside vs landlocked)
+
+
+# Lets investigate potassium again
+```{r}
+plot_var('41') # potassium
+```
+
+```{r}
+pot <- data[data$varnum=="41",]
+drops <- c("varnum")
+pot <- pot[ , !(names(pot) %in% drops)]
+pot <- pot[with(pot,order(-median)),]
+top <- pot[1:10,]
+top # Lebanon ?
+```
+
+```{r}
+pot <- data[data$varnum=="1",]
+drops <- c("varnum")
+pot <- pot[ , !(names(pot) %in% drops)]
+pot <- pot[with(pot,order(-median)),]
+top <- pot[1:100,]
+top # Lebanon ?
+```

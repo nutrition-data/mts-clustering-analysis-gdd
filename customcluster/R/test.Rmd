@@ -1,0 +1,25 @@
+---
+title: "Untitled"
+author: 'test'
+date: "08/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r results='hide', message=FALSE, warning=FALSE}
+```
+
+```{r}
+source("hello.R", local = knitr::knit_global())
+```
+
+```{r}
+data <- read.csv("../../data/data_all_999.csv")
+customcluster(data, k=2, "EUCL", "PAM")
+```
+

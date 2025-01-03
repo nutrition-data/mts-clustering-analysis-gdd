@@ -1,0 +1,402 @@
+---
+title: "Untitled"
+author: '9240'
+date: "07/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(reshape2)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(tibble)
+library(data.table)
+library(reshape)
+```
+
+# Download and Unzip
+```{r}
+# download.file("https://www.globaldietarydatabase.org/sites/default/files/gdd-data-downloads/20220110/GDD_FinalEstimates_01102022.zip", "./temp.zip") # old link
+download.file("https://tufts.box.com/shared/static/3cpx8kcr1ls69f4yqmh1rkuqs6ev4ewq.zip", "./temp.zip")
+# please check the original site before downloading the data: https://globaldietarydatabase.org/data-download
+
+unzip("./temp.zip", exdir="./temp")
+```
+
+# Delete Uneccessary
+```{r}
+unlink("./temp/Global estimates", recursive = TRUE) # will delete directory called 'mydir'
+unlink("./temp/Regional estimates", recursive = TRUE) # will delete directory called 'mydir'
+```
+
+```{r}
+data_dir <- "./temp/Country-level estimates"
+```
+
+
+# Collate 999 rows across all nutritional vars
+```{r}
+files <- list.files(data_dir)
+```
+
+```{r}
+file <- paste(data_dir,"/", files[1], sep="")
+first_file <- fread(file=file)
+# drop unecessary columns
+first_file <- first_file[,c("iso3", "age", "female", "urban", "edu", "year", "varnum", "median")]
+first_file <- as.data.frame(first_file)
+```
+
+
+# create dict for possible stratifiable vars
+```{r}
+# for each stratifiable var, get all possible values
+stratifiable <- c("age", "female", "urban", "edu")
+
+dict <- list()
+for (var in stratifiable) {
+  print(var)
+  values <- unique(first_file[,var])
+  values <- values[values!=999]
+  print(values)
+  print("hi")
+  dict[[var]] <- values
+}
+
+```
+
+```{r}
+# initialise empty DF lists
+dict_dfs <- list()
+for (var_name in names(dict)) {
+  for (var_value in dict[[var_name]]) {
+    list_name <- paste(var_name, "_", var_value, sep="")
+    dict_dfs[[list_name]] <- list()
+  }
+}
+
+for (file in files) {
+  # get varnum
+  x <- substring(file, 2)
+  varnum <- substring(x, 1, nchar(x) - 9)
+  
+  file_path <- paste(data_dir,"/", file, sep="")
+  print(file_path)
+  df_temp <- fread(file=file_path)
+  df_temp <- as.data.frame(df_temp)
+  df_temp <- df_temp[,c("iso3", "age", "female", "urban", "edu", "year", "median")]
+  df_temp$varnum <- varnum
+  print("finished reading")
+  
+  for (var_name in names(dict)) {
+    for (var_value in dict[[var_name]]) {
+      list_name <- paste(var_name, "_", var_value, sep="")
+      other_vars <- stratifiable[stratifiable!=var_name]
+      
+      # nasty eval :))
+      conditions <- paste("df_temp$", other_vars, "==999", sep="", collapse=" & ")
+      # add the value of interest (var_value)
+      conditions <- paste(conditions, " & ", "df_temp$", var_name, "==", var_value, sep="")
+      df_new = df_temp[eval(parse(text=conditions)),]
+      df_new <- df_new[,c("iso3", "year", "median", "varnum")]
+      dict_dfs[[list_name]] <- append(dict_dfs[[list_name]], list(df_new))
+    }
+  }
+  
+  # also add all == 999
+  # bug: creates some empty dfs ?!
+  list_name <- paste("all", "_", "999", sep="")
+  df_new = df_temp[df_temp$age == 999 & df_temp$female == 999 & df_temp$urban == 999 & df_temp$edu == 999,]
+  df_new <- df_new[,c("iso3", "year", "median", "varnum")]
+  dict_dfs[[list_name]] <- append(dict_dfs[[list_name]], list(df_new))
+}
+```
+
+Add all == 999
+```{r}
+dict[["all"]] <- 999
+```
+
+
+Combine nutritional variables into single df
+```{r}
+dict_dfs_final <- list()
+for (var_name in names(dict)) {
+  for (var_value in dict[[var_name]]) {
+    list_name <- paste(var_name, "_", var_value, sep="")
+    dict_dfs_final[[list_name]] <- list()
+  }
+}
+
+for (var_name in names(dict)) {
+  for (var_value in dict[[var_name]]) {
+    list_name <- paste(var_name, "_", var_value, sep="")
+    print(list_name)
+    x <- rbindlist(dict_dfs[[list_name]])
+    
+    # remove 2020
+    x <- x[x$year < 2019,]
+    
+    # round to 3 sig figs
+    x <- x %>% mutate_at(vars(median), funs(round(., digits=5)))
+
+    dict_dfs_final[[list_name]] <- x
+  }
+}
+```
+
+
+## Load Data
+```{r}
+data <- dict_dfs_final[["all_999"]]
+length(unique(data$iso3))
+isos_before <- unique(data$iso3)
+```
+
+## Income Groups
+These are World Bank classifications. Medium-Low and Medium-High have been merged to Medium.
+- 0 low
+- 1 medium
+- 3 high
+
+We define 5 resulting income groups of countries:
+1. Remain low over time
+2. Remain medium over time
+3. Remain high over time
+4. 2nd half same as 1st half
+5. 2nd half lower
+6. 2nd half higher
+7. Has Low, Medium, High classifications at some point
+
+```{r}
+groups <- read.csv(file="./data/wb_classes_clean.csv")
+# first lets try to create classes 1,2,3
+groups <- groups %>%
+    rowwise() %>%
+    do(
+      data.frame(., UniqueCount = n_distinct(.)-1)
+    )
+    
+groups <- groups %>%
+  mutate(income=case_when(
+    UniqueCount==1 ~ X1990+1,
+    UniqueCount==2 ~ 99,
+    UniqueCount==3 ~ 7
+  ))
+
+table(groups$UniqueCount)
+table(groups$income)
+```
+
+70 countries have changing income classifications.
+```{r}
+income_dist <- as.data.frame(table(groups$income))
+income_dist$Var1 <- c('Low', 'Medium', 'High', 'Three Incomes', 'Two Incomes')
+pie(income_dist$Freq, labels=income_dist$Var1)
+```
+Change pie to something nice
+
+```{r}
+sum(income_dist$Freq)
+```
+
+```{r}
+income_dist$percent <- income_dist$Freq/181*100
+```
+
+```{r}
+income_dist
+```
+
+
+
+
+Add avg income group
+```{r}
+# +1 as original data indexed from 0, i.e. low=0, but here low=1
+groups$avg_income <- rowMeans(subset(groups, select=X1990:X2018, na.rm = TRUE)) + 1 
+#groups$avg_income <- round(groups$avg_income, 0) # get avg
+```
+
+```{r}
+changing <- groups[groups$income==99,]
+changing <- subset(changing, select=-c(UniqueCount,income))
+changing <- gather(changing, year, income, X1990:X2018, factor_key=TRUE)
+ggplot(changing, aes(x = year, y = income, group=iso3)) + 
+  geom_line(color="blue", size=2, alpha=0.01) +
+  scale_y_continuous(breaks = seq(0, 3)) # y axisx
+```
+
+```{r}
+groups$avg_half_1 <- rowMeans(subset(groups, select=X1990:X2000, na.rm = TRUE)) + 1
+groups$avg_half_2 <- rowMeans(subset(groups, select=X2010:X2018, na.rm = TRUE)) + 1
+```
+
+```{r}
+groups <- groups %>%
+  mutate(income=case_when(
+    (income==99 & avg_half_2==avg_half_1) ~ 4,
+    (income==99 & avg_half_2<avg_half_1) ~ 5,
+    (income==99 & avg_half_2>avg_half_1) ~ 6,
+    TRUE ~ income
+  ))
+```
+
+# Split 2nd half higher class (L->M,  M->H)
+
+```{r}
+income_dist <- as.data.frame(table(groups$income))
+income_dist$Var1 <- c('Low', 'Medium', 'High', '2nd half same as 1st half', '2nd half lower', '2nd half higher', 'Three Incomes')
+pie(income_dist$Freq, labels=income_dist$Var1)
+```
+
+```{r}
+groups <- groups[,c('iso3','income')]
+write.csv(groups, "./data/income_groups.csv")
+```
+
+
+Add income to main data
+```{r}
+# Find which countries not in WB classifications
+isos_after <- unique(data$iso3)
+lost_countries <- setdiff(isos_before, isos_after)
+print("Countries with no WB info:")
+print(lost_countries)
+```
+```{r}
+groups
+```
+
+
+
+# Add DALY
+```{r}
+daly <- read.csv(file = './data/daly_percent.csv')
+daly <- daly[,c('location','year','val')]
+countries <- unique(daly$location)
+
+refs <- read.csv(file = './data/countries_iso.csv')
+refs <- refs[,c('name','alpha.3')]
+unknown <- c()
+refs$actual <- NA
+for (i in countries) {
+  if ((nrow(refs[refs$name==i,])) > 0) {
+    #print(refs[refs$name==i,]$alpha.3)
+    refs[refs$name==i,]$actual = i
+  } else {
+    unknown <- c(unknown, i)
+  }
+}
+matched <- unique(refs[,c('alpha.3','actual')])
+#clipr::write_clip(refs)
+#clipr::write_clip(unknown)
+#matched <- matched[complete.cases(matched),]
+
+# manually added them
+```
+
+```{r}
+# GDD isos
+gdd_isos <- unique(data$iso3)
+```
+
+
+```{r}
+country_map <- read.csv(file='./data/country_names_map_iso.csv')
+country_map <- country_map[,c('alpha.3','actual')]
+country_map$gdd <- NA
+for (i in gdd_isos) {
+    if ((nrow(country_map[country_map$alpha.3==i,])) > 0) {
+    country_map[country_map$alpha.3==i,]$gdd = i
+  } else {
+    print(i)
+  }
+}
+# get only GDD countries
+country_map <- country_map[!is.na(country_map$gdd),]
+rownames(country_map) <- NULL
+```
+
+Get only countries in GDD
+```{r}
+daly <- daly[daly$location %in% country_map$actual,]
+```
+
+#### replace DALY names with iso
+```{r}
+daly$iso3 <- NA
+for (i in country_map$actual) {
+  # iso getter
+  # country_map[country_map$actual==i,]$gdd
+  daly$iso3[daly$location==i] <- country_map[country_map$actual==i,]$gdd
+}
+```
+
+```{r}
+daly$varnum <- 100
+colnames(daly)[colnames(daly) == 'val'] <- 'median'
+daly <- daly[c('iso3','year','median','varnum')]
+```
+
+```{r}
+daly
+```
+
+Aims:
+- Add DALY to all dfs
+- Add incomes to all dfs
+
+Find countries with complete data
+```{r}
+complete_isos <- intersect(unique(daly$iso3), unique(groups$iso3))
+complete_isos <- intersect(complete_isos, unique(dict_dfs_final[["all_999"]]$iso3))
+length(complete_isos)
+```
+Loop through dfs and add groups + daly
+Also remove incomplete countries
+```{r}
+for (var_name in names(dict)) {
+  for (var_value in dict[[var_name]]) {
+    list_name <- paste(var_name, "_", var_value, sep="")
+    df <- dict_dfs_final[[list_name]]
+    
+    # remove countries
+    df <- df[df$iso %in% complete_isos,]
+    
+    # add daly
+    df <- rbind(df, daly)
+    
+    # add incomes
+    df <- merge(df, groups, by="iso3")
+    
+    dict_dfs_final[[list_name]] <- df
+  }
+}
+```
+
+Finally save the DFs
+```{r}
+DATA_FOLDER <- "./data/"
+dir.create(DATA_FOLDER)
+
+for (var_name in names(dict)) {
+  for (var_value in dict[[var_name]]) {
+    list_name <- paste(var_name, "_", var_value, sep="")
+    df <- dict_dfs_final[[list_name]]
+    write.csv(df, paste(DATA_FOLDER, "data_", list_name, ".csv", sep=""), row.names=FALSE)
+  }
+}
+```
+
+```{r}
+temp <- unique(data[,c("iso3", "income")])
+table(temp$income)
+```
+
+

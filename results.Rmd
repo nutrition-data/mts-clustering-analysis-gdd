@@ -1,0 +1,924 @@
+---
+title: "Untitled"
+author: '9240'
+date: "08/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(flextable)
+library(dplyr)
+library(officer)
+DIR <- "./results/"
+source("utils.R", local = knitr::knit_global())
+source("./customcluster/R/hello.R", local = knitr::knit_global())
+```
+
+```{r}
+set_flextable_defaults(
+  font.family = "CMU Serif",
+  font.size = 10,
+  font.color = NULL,
+  text.align = NULL,
+  padding = NULL,
+  padding.bottom = NULL,
+  padding.top = NULL,
+  padding.left = NULL,
+  padding.right = NULL,
+  border.color = NULL,
+  background.color = NULL,
+  line_spacing = NULL,
+  table.layout = NULL,
+  cs.family = NULL,
+  eastasia.family = NULL,
+  hansi.family = NULL,
+  decimal.mark = NULL,
+  big.mark = NULL,
+  digits = NULL,
+  na_str = NULL,
+  nan_str = NULL,
+  fmt_date = NULL,
+  fmt_datetime = NULL,
+  extra_css = NULL,
+  fonts_ignore = NULL,
+  theme_fun = NULL,
+  post_process_pdf = NULL,
+  post_process_docx = NULL,
+  post_process_html = NULL,
+  post_process_pptx = NULL
+)
+```
+
+# Setup results
+
+```{r}
+configs <- list(
+    list(
+    Incomes = c(1,2,3),
+    VariableRepeats = c(15, 35, 38, 43, 54),
+    Datasets = c("all_999", "female_0", "female_1")
+  ),
+  list(
+    Incomes = c(1,3),
+    VariableRepeats = c(15, 35, 38, 43, 54),
+    # sugar sweetened beverages, added sugar, iodine, vitamin A, zinc 
+    Datasets = c("all_999", "female_0", "female_1")
+  ),
+  list(
+    Incomes = c(1,6),
+    VariableRepeats = c(15, 35, 38, 43, 54),
+    Datasets = c("all_999", "female_0", "female_1")
+  )
+)
+```
+
+```{r}
+add_row <- function(df, algo, metric, dataset, variable, incomes, time.taken, stats) {
+  print(paste(algo, metric, dataset, variable, time.taken, stats$cfm$overall[['Accuracy']]))
+  df[nrow(df)+1,] <- c(
+    algo, 
+    metric,
+    dataset, 
+    variable,
+    toString(incomes),
+    time.taken,
+    stats$cfm$overall['Accuracy'], 
+    stats$cfm$byClass['Sensitivity'], 
+    stats$cfm$byClass['Specificity'], 
+    stats$ri,
+    stats$ari
+  )
+  return(df)
+}
+```
+
+# Run all results
+
+```{r}
+# for (config in configs) {
+#   print(config$Incomes)
+# }
+
+run_config <- function(config) {
+  df <- data.frame(
+    "Algo"= character(),
+    "Distance Metric"= character(),
+    "Dataset"=character(),
+    "Variable"=character(),
+    "Incomes"=character(),
+    "Time.Taken"=numeric(),
+    "Accuracy"=numeric(),
+    "Sensitivity"=numeric(),
+    "Specificity"=numeric(),
+    "Rand Index"=numeric(),
+    "Adj Rand Index"=numeric()
+  )
+
+  k = length(config$Incomes)
+  for (variable in config$VariableRepeats) {
+    for (dataset in config$Datasets) {
+      data <- select_data(dataset, config$Incomes, c(100, variable))
+      
+      algo = "DTWCLUST"
+      metric = "N/A"
+      start.time <- Sys.time()
+      result <- clusterdtw(data, k=k)
+      end.time <- Sys.time()
+      time.taken <- end.time - start.time
+  
+      stats <- get_results(result$result, result$income)
+      df <- add_row(df, algo, metric, dataset, variable, toString(config$Incomes), time.taken, stats)
+  
+      custom_metrics <- c("CDM", "CORT", "DTWARP", "EUCL", "NCD")
+      
+      algo = "Custom PAM"
+      for (metric in custom_metrics) {
+        start.time <- Sys.time()
+        result <- customcluster(data, k=k, cluster_algo="PAM", dist_metric=metric)
+        end.time <- Sys.time()
+        time.taken <- end.time - start.time
+        stats <- get_results(result$result, result$income)
+        df <- add_row(df, algo, metric, dataset, variable, toString(config$Incomes), time.taken, stats)
+      }
+      
+      # for (metric in custom_metrics) {
+      #   result <- customcluster(data, k=k, cluster_algo="HCLUST", dist_metric=metric)
+      #   stats <- get_results(result$result, result$income)
+      #   df <- add_row(df, algo, metric, dataset, variable, stats)
+      # }
+    }
+  }
+  return(df)
+}
+
+
+df_tot <- NA
+for (config in configs) {
+  x <- run_config(config)
+  if (!is.na(df_tot)) {
+    df_tot <- rbind(df_tot, x)
+  }
+}
+```
+
+```{r}
+write.csv(df_tot, paste(DIR, "results.csv", sep=""))
+```
+
+```{r}
+df_all <- read.csv(file =paste(DIR, "results.csv", sep=""))
+
+df_grouped <- df_all %>%
+  group_by(across(all_of(c("Algo", "Distance.Metric", "Dataset", "Incomes")))) %>%
+  summarise(Mean.Accuracy = mean(Accuracy))
+
+Mean.Time <- df_all%>%
+  group_by(across(all_of(c("Algo", "Distance.Metric", "Dataset", "Incomes")))) %>%
+  summarise(Mean.Time = mean(Time.Taken))
+
+
+Mean.Sensitivity <- df_all%>%
+  group_by(across(all_of(c("Algo", "Distance.Metric", "Dataset", "Incomes")))) %>%
+  summarise(Mean.Sensitivity = mean(Sensitivity))
+
+
+Mean.Specificity <- df_all%>%
+  group_by(across(all_of(c("Algo", "Distance.Metric", "Dataset", "Incomes")))) %>%
+  summarise(Mean.Specificity = mean(Specificity))
+
+Mean.Rand.Index <- df_all%>%
+  group_by(across(all_of(c("Algo", "Distance.Metric", "Dataset", "Incomes")))) %>%
+  summarise(Mean.Rand.Index = mean(Rand.Index))
+
+Mean.Adj.Rand.Index <- df_all%>%
+  group_by(across(all_of(c("Algo", "Distance.Metric", "Dataset", "Incomes")))) %>%
+  summarise(Mean.Adj.Rand.Index = mean(Adj.Rand.Index))
+
+df_grouped$Mean.Time <- Mean.Time$Mean.Time
+df_grouped$Mean.Sensitivity <- Mean.Sensitivity$Mean.Sensitivity
+df_grouped$Mean.Specificity <- Mean.Specificity$Mean.Specificity
+df_grouped$Mean.Rand.Index <- Mean.Rand.Index$Mean.Rand.Index
+df_grouped$Mean.Adj.Rand.Index <- Mean.Adj.Rand.Index$Mean.Adj.Rand.Index
+
+```
+
+```{r}
+df_all
+```
+
+# Format table
+
+```{r}
+df_export <- df_grouped[df_grouped$Distance.Metric %in% c("N/A", "EUCL"),]
+df_export <- df_export[order(df_export$Incomes, df_export$Algo, df_export$Dataset),]
+
+ft <- flextable(df_export)
+ft <- font(ft, fontname="CMU Serif", part="all")
+ft <- font(ft, fontname="CMU Serif BOLDONLY", part="header")
+ft <- border(ft, border=fp_border(color="black"), part="all")
+ft <- colformat_double(ft, digits = 3, na_str = "N/A")
+
+ft <- padding(
+  ft, 
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2,
+  part = "all"
+)
+
+ft <- padding(
+  ft, 
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2,
+  part = "header"
+)
+
+ft <- padding(
+  ft, 
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2,
+  part = "body"
+)
+
+ft <- line_spacing(ft, space = 1, part = "all")
+
+ft <- align(ft, align="center", part="all")
+# ft <- autofit(ft)
+ft
+```
+
+```{r}
+save_as_docx(ft, path=paste(DIR, "mean.docx", sep=""))
+```
+
+```{r}
+a <- colnames(df_export) 
+gsub("//.", " ", a)
+```
+
+
+# Caclulate Reference / Expected Values
+
+2 classes
+
+```{r}
+
+
+simulate_reference <- function(classes, class_size, repeats){
+  truth <- rep(1:classes, each=class_size)
+  table(truth)
+
+  acc_count = c()
+  rand_count = c()
+  adj_rand_count = c()
+  for (i in 1:repeats) {
+    set.seed(i)
+    # generate random pred
+    x <- sample(x = c(1:classes), size=class_size*classes, replace = TRUE)
+    
+    # calculate acc from get_results
+    res <- get_results(x, truth)
+    
+    #print(res$cfm$overall[['Accuracy']])
+    # add to current count
+    #acc_count <- acc_count + res$cfm$overall[['Accuracy']]
+    acc_count <- append(acc_count, as.numeric(res$cfm$overall[['Accuracy']]))
+    rand_count <- append(rand_count, as.numeric(res$ri))
+    adj_rand_count <- append(adj_rand_count, as.numeric(res$ari))
+  }
+  
+  return(list("accuracy"=acc_count, "rand"=rand_count, "adj_rand"=adj_rand_count))
+}
+
+sim3 <- simulate_reference(classes=3, class_size=50, repeats=1000)
+```
+
+```{r}
+sim2 <- simulate_reference(classes=2, class_size=50, repeats=1000)
+```
+
+```{r}
+plot_dist <- function(sim_res, n_classes) {
+  C1 <- data.frame(value=sim_res$accuracy, variable = "Accuracy")
+  C2 <- data.frame(value=sim_res$rand, variable = "Rand")
+  C3 <- data.frame(value=sim_res$adj_rand, variable = "Adj Rand")
+  dat <- rbind(C1, C2, C3)
+  head(dat)
+  
+  ggplot(dat, aes(x = variable, y = value)) +
+    geom_violin()
+}
+
+plot_dist(sim3, 3)
+```
+
+```{r}
+plot_dist(sim2, 2)
+```
+
+```{r}
+df_sims <- data.frame(
+  Number.Classes=character(),
+  Median.Accuracy=numeric(), 
+  Median.Rand.Index=numeric(), 
+  Median.Adj.Rand.Index=numeric()
+) 
+
+df_sims[nrow(df_sims) + 1,] = c(2, median(sim2$accuracy), median(sim2$rand), median(sim2$adj_rand))
+df_sims[nrow(df_sims) + 1,] = c(3, median(sim3$accuracy), median(sim3$rand), median(sim3$adj_rand))
+
+ft <- flextable(df_sims)
+ft <- font(ft, fontname="CMU Serif", part="all")
+ft <- font(ft, fontname="CMU Serif BOLDONLY", part="header")
+ft <- border(ft, border=fp_border(color="black"), part="all")
+ft <- colformat_double(ft, digits = 3, na_str = "N/A")
+
+ft <- padding(
+  ft, 
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2,
+  part = "all"
+)
+
+ft <- padding(
+  ft, 
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2,
+  part = "header"
+)
+
+ft <- padding(
+  ft, 
+  padding.top = 0,
+  padding.bottom = 0,
+  padding.left = 2,
+  padding.right = 2,
+  part = "body"
+)
+
+ft <- line_spacing(ft, space = 1, part = "all")
+
+ft <- align(ft, align="center", part="all")
+# ft <- autofit(ft)
+ft
+```
+
+```{r}
+save_as_docx(ft, path=paste(DIR, "reference_vals.docx", sep=""))
+```
+
+  # TODO: make formatting a function, replace . in colnames with space
+
+# Attempt DTWclust tuning
+
+create tuning grid
+
+
+```{r}
+library(tidyr)
+grid <- crossing(
+  norm = c("L1", "L2"),
+  sqrt.dist = c(TRUE, FALSE),
+  backtrack = c(TRUE, FALSE),
+  normalize = c(TRUE, FALSE)
+)
+```
+
+# Tune DTW
+
+```{r}
+res <-  data.frame(
+  params=character(),
+  i_n=integer(),
+  j=integer(),
+  accuracy=numeric()
+)
+
+data <- select_data("all_999", c(1,2,3), c(100, 15))
+
+print("number of combinations:")
+print(nrow(grid))
+  
+  
+i_n <- 1 # param id           
+for (i in 1:nrow(grid)) {
+  row <- grid[i,]
+  for (j in 1:1000) {
+    # 1000 repeats each (change seed)
+    
+    result <- clusterdtw(data, k=3, normalize=row$normalize, norm=row$norm, sqrt.dist=row$sqrt.dist, backtrack=row$backtrack, seed=j)
+    stats <- get_results(result$result, result$income)
+    
+    # collate accuracies
+    
+    res[nrow(res) + 1,] = c(paste(row, collapse=" "), i_n, j, stats$cfm$overall[['Accuracy']])
+  }
+  print(row)
+  i_n = i_n + 1
+}
+```
+
+```{r}
+for (i in 0:15){
+  print(paste0("Combo:", i+1))
+  print(as.character(res[i*1000+3,]['params']))
+}
+# 1-4 what is changing is uninportant: backtrack, normalisation
+# 5-8 unimpotant: same
+```
+
+```{r}
+library(ggplot2)
+  
+res2 <- res[,c('i_n', 'accuracy')]
+res2$ParameterCombination <- as.factor(as.numeric(res2$i_n))
+res2$Accuracy <- as.numeric(res2$accuracy)
+p <- ggplot(res2, aes(x=ParameterCombination, y=Accuracy)) + 
+  geom_violin()
+p <- p + stat_summary(fun.y=median, geom="point", size=2, color="red")
+p
+```
+```{r}
+as.factor(as.numeric(res2$i_n))
+```
+
+```{r}
+library(ggplot2)
+ggsave(
+  paste(DIR, "tuning.png", sep=""),
+  plot = p,
+)
+```
+
+Print median values for each
+
+```{r}
+res3 <- res2[,c('Accuracy', 'ParameterCombination')]
+library(dplyr)
+res4 <- res3 %>%
+  group_by(ParameterCombination)%>% 
+  summarise(Mean=mean(Accuracy), Max=max(Accuracy), Min=min(Accuracy), Median=median(Accuracy), Std=sd(Accuracy))
+
+res4
+```
+
+```{r}
+grid[6,]
+```
+
+Normalise no effect
+
+```{r}
+grid[7,]
+```
+
+Backtrack no effect
+
+```{r}
+grid[8,]
+```
+
+```{r}
+grid[14,]
+```
+
+# map plots
+
+iso coverage (incomes, 1,2,3,6), colored
+
+```{r}
+data <- select_data("all_999", c(1,2,3,6), c(15))
+data <- data[,c("iso3", "income")]
+data <- data[!duplicated(data), ]
+
+library(rworldmap)
+
+## Create multiple color codes, with Burkina Faso in its own group
+malDF <- data.frame(
+  country = c("DEU", "COD", "BFA"),
+  malaria = c(1, 1, 2)
+)
+
+## Re-merge
+malMap <- joinCountryData2Map(
+  data, 
+  joinCode = "ISO3",
+  nameJoinColumn = "iso3"
+)
+
+## Specify the colourPalette argument
+mapCountryData(
+  malMap, 
+  nameColumnToPlot="income", 
+  catMethod = "categorical",
+  missingCountryCol = gray(.8), 
+  colourPalette = c("red", "blue", "green", "yellow"),
+  addLegend = TRUE
+)
+```
+
+create function to plot these for cluster results
+
+```{r}
+plot_map <- function(result) {
+  ## Re-merge
+  malMap <- joinCountryData2Map(
+    result, 
+    joinCode = "ISO3",
+    nameJoinColumn = "iso3"
+  )
+  
+  cols <- c("red", "green", "blue", "purple")
+  if (6 %in% result$result) {
+    cols <- c("red", "green", "blue", "purple", "yellow", "orange")
+  }
+  ## Specify the colourPalette argument
+  mapCountryData(
+    malMap, 
+    nameColumnToPlot="result", 
+    catMethod = "categorical",
+    missingCountryCol = gray(.8), 
+    colourPalette = cols
+  )
+}
+```
+
+# line plots
+```{r, fig.width=100,fig.height=11}
+plot_lines <- function(df, colour_col='cluster', ylim=1200, black=FALSE, yaxis, key_title="clusters") {
+  clusters <- as.factor(df[[colour_col]])
+  years <- unique(df$year)
+  
+  p <- ggplot(data=df, aes(x=year, y=median, group=iso3, colour=clusters)) +
+  geom_line(alpha=0.2) +
+  ylim(0,ylim) +
+  theme_bw() +
+  guides(color = guide_legend(override.aes = list(size = 4, alpha=1))) +
+  labs(color=key_title) +
+  scale_x_continuous("Year", labels = as.character(years), breaks=(years)) +
+  theme(text = element_text(size=15)) +
+  theme(axis.title = element_text(size = 18)) +
+  ylab(yaxis)
+
+  if (black) {
+    p <- p + scale_color_manual(values=c("#000000", "#000000"))
+    p <- p + theme(legend.position = "none")
+  }
+  p
+}
+```
+
+```{r}
+plot_lines(data2)
+```
+
+
+# Do all plots
+
+```{r}
+do_all_plots <- function(result, data, varnums=c(15), income=FALSE) {
+  print(table(result$result))
+  
+  # map plot
+  print(plot_map(result))
+  
+  # for each varnum
+  for (varnum in varnums) {
+        yaxis = NULL
+    if (varnum == 15){
+      yaxis = "Median sugar-sweetened\nbeverage intake (g/day)"
+    } else if (varnum == 100) {
+      yaxis = "Nutritional deficiency\n(DALYs)"
+    }
+        
+    ylim <- 1200
+    if (varnum == 100) {
+      ylim <- 0.10655375
+    }
+    # prepare TS data
+    data2 <- data[data$varnum==varnum,]
+
+    data2$cluster <- FALSE
+    for (row in 1:nrow(result)) {
+      data2[data2$iso3==(result[row,]$iso3),]$cluster <- result[row,]$result
+    }
+    
+    # full line plot
+    print(plot_lines(data2, ylim=ylim, yaxis=yaxis))
+    
+    # separated line plots
+    for (i in 1:4) {
+     print(plot_lines(data2[data2$cluster==i,], ylim=ylim, black=TRUE, yaxis=yaxis))
+    }
+  }
+}
+
+# do_all_plots(result, data, varnums=c(15, 100))
+```
+
+```{r}
+params_opt <- grid[5,]
+params_opt
+```
+
+# Apply to data | DTW
+
+```{r}
+library(tibble)
+```
+
+```{r}
+data <- select_data("all_999", c(1,2,3,6), c(100, 15))
+result <- clusterdtw(data, k=4, norm=params_opt$norm, sqrt.dist=params_opt$sqrt.dist)
+
+result <- tibble::rownames_to_column(result, "iso3")
+result
+```
+
+```{r}
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+# Apply to data | Custom
+
+```{r}
+data <- select_data("all_999", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM")
+result <- tibble::rownames_to_column(result, "iso3")
+result
+```
+
+```{r}
+do_all_plots(result, data, varnums = ums=c(15,100))
+```
+# Applied 2 var, custom, cort
+```{r}
+data <- select_data("all_999", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+result
+```
+
+```{r, fig.width=6, fig.height=3}
+do_all_plots(result, data, varnums=c(15,100))
+```
+## Male
+
+```{r}
+data <- select_data("female_0", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+```
+
+```{r, fig.width=6, fig.height=3}
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+## Female
+
+```{r}
+data <- select_data("female_1", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+# remap
+# green to blue (2 - 5 - 3)
+# blue to red (3 - 6 - 1)
+# red to green (1 - 7 - 2)
+result$result[result$result==2] = 5
+result$result[result$result==3] = 6
+result$result[result$result==1] = 7
+
+result$result[result$result==5] = 3
+result$result[result$result==6] = 1
+result$result[result$result==7] = 2
+
+result
+```
+
+```{r, fig.width=6, fig.height=3}
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+## Age 12.5
+
+```{r, fig.width=6, fig.height=3}
+data <- select_data("age_12.5", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+# result$result[result$result==2] = 5
+# result$result[result$result==3] = 6
+# result$result[result$result==1] = 7
+# 
+# result$result[result$result==5] = 3
+# result$result[result$result==6] = 1
+# result$result[result$result==7] = 2
+
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+
+## Age 82.5
+```{r, fig.width=6, fig.height=3}
+data <- select_data("age_12.5", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+## Edu 0
+```{r, fig.width=6, fig.height=3}
+data <- select_data("edu_1", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+
+
+## Edu 2
+```{r, fig.width=6, fig.height=3}
+# data <- select_data("edu_3", c(1,2,3,6), c(100, 15))
+# 
+# result$result[result$result==2] = 5
+# result$result[result$result==3] = 6
+# result$result[result$result==1] = 7
+# 
+# result$result[result$result==5] = 3
+# result$result[result$ result==6] = 1
+# result$result[result$result==7] = 2
+# 
+# result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+# result <- tibble::rownames_to_column(result, "iso3")
+# do_all_plots(result, data, varnums=c(15,100))
+```
+
+
+
+## Urban 0
+```{r, fig.width=6, fig.height=3}
+data <- select_data("urban_0", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+do_all_plots(result, data, varnums=c(15,100))
+```
+  
+
+## Urban 1    
+```{r, fig.width=6, fig.height=3}
+data <- select_data("urban_1", c(1,2,3,6), c(100, 15))
+
+result <- customcluster(data, k=4, cluster_algo="PAM", dist_metric="CORT")
+result <- tibble::rownames_to_column(result, "iso3")
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+
+# MTS clustering with custom aglo (all variables)
+
+```{r}
+# retrieve list of all variable numbers
+datatemp <- read.csv(file="./data/data_all_999.csv")
+varnums <- unique(datatemp$varnum)
+varnums
+```
+
+```{r}
+length(varnums)
+```
+
+```{r}
+data <- select_data("all_999", c(1,2,3,6), varnums)
+
+result <- customcluster(data, k=4, cluster_algo="PAM")
+
+result <- tibble::rownames_to_column(result, "iso3")
+result
+```
+
+```{r}
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+```{r}
+write.csv(result, paste(DIR, "full_mts_custom_clusters.csv", sep=""), row.names = FALSE)
+```
+
+## Try k=6 for MTS
+
+# MTS clustering with custom aglo (all variables)
+
+```{r}
+data <- select_data("all_999", c(1,2,3,6), varnums)
+
+result <- customcluster(data, k=6, cluster_algo="PAM")
+
+result <- tibble::rownames_to_column(result, "iso3")
+result
+```
+
+```{r}
+do_all_plots(result, data, varnums=c(15,100))
+```
+
+add cluster info to TS data
+
+```{r}
+data2 <- data[data$varnum==15,]
+
+data2$cluster <- FALSE
+
+for (row in 1:nrow(result)) {
+  # print(result[row,]$iso3)
+  data2[data2$iso3==(result[row,]$iso3),]$cluster <- result[row,]$result
+}
+```
+
+## Visualise Clusters
+
+```{r}
+table(result$result)
+```
+
+```{r}
+# plot_lines <- function(df) {
+#   ggplot(data=df, aes(x=year, y=median, group=iso3, colour=as.factor(cluster))) + # colour=iso3 could make color income group
+#   geom_line(alpha=0.2) +
+#   guides(colour = guide_legend(override.aes =  = list(alpha = 1)))
+# }
+# 
+# plot_lines(data2)
+```
+
+seperate plots
+
+```{r}
+# plot_lines <- function(df) {
+#   ggplot(data=df, aes(x=year, y=median, group=iso3, color=as.factor(cluster))) + # colour=iso3 could make color income group
+#   geom_line(alpha=0.2) +
+#   ylim(0,1200) +
+#   scale_color_manual(values=c("#000000", "#000000"))
+# 
+#   # guides(color = guide_legend(override.aes = list(alpha = 1)))
+# }
+# 
+# for (i in 1:6) {
+#   print(plot_lines(data2[data2$cluster==i,]))
+# }
+```
+
+```{r}
+plot_map(result)
+```
+
+```{r}
+write.csv(result, paste(DIR, "full_mts_custom_clusters_k_6.csv", sep=""), row.names = FALSE)
+```
+
+# Investigate income 7
+
+```{r}
+data <- select_data("all_999", c(7), c(15))
+data
+```
+
+# Explore custom cluster other metrics
+
+```{r}
+data <- select_data("all_999", c(1,6), c(100, "15"))
+
+result <- customcluster(data, k=2, cluster_algo="PAM", dist_metric="CORT")
+
+stats <- get_results(result$result, result$income)
+stats
+```
+
+# plot incomes
+```{r}
+data <- select_data("all_999", c(1,2,3,6), c(15))
+plot_lines(data, colour_col = "income", yaxis="Median sugar-sweetened\nbeverage intake (g/day)", key_title="Income Class")
+
+```
+

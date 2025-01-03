@@ -1,0 +1,83 @@
+---
+title: "Untitled"
+author: '9240'
+date: "08/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(reshape2)
+library(reshape)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(tibble)
+library(zoo)
+library(TSclust)
+library(dtwclust)
+```
+
+
+# Clustering
+## Example from Documentation
+```{r}
+mv <- CharTrajMV
+# Using GAK distance
+mvc <- tsclust(mv, k = 20, distance = "gak", seed = 390,
+args = tsclust_args(dist = list(sigma = 100)))
+# Note how the variables of each series are appended one after the other in the plot
+plot(mvc)
+```
+
+```{r}
+mvc <- tsclust(mv, k = 4L, distance = "dtw_basic", seed = 390,
+args = tsclust_args(dist = list(sigma = 100)))
+# Note how the variables of each series are appended one after the other in the plot
+plot(mvc)
+```
+Explore necessary data format
+```{r}
+av1 <- mv$A.V1
+av2 <- mv$A.V2
+bv2 <- mv$B.V2
+cv3 <- mv$C.V3
+
+z <- CharTraj
+# interactive_clustering(CharTrajMV)
+```
+
+How is Nutritional Deficiency Defined/collected, lag
+Run on data - easy to interpret? How to judge results? Stratified data to assess consistentcy/validity of clustering
+Other approaches
+Consider outcomes, what want to achieve
+
+```{r}
+# univariat ts
+series <- reinterpolate(CharTraj, new.length = max(lengths(CharTraj)))
+# Subset for speed
+series <- series[1:20]
+labels <- CharTrajLabels[1:20]
+# Making many repetitions
+pc.l2 <- tsclust(series, k = 4L,
+distance = "L2", centroid = "pam",
+seed = 3247, trace = TRUE,
+control = partitional_control(nrep = 10L))
+# Cluster validity indices
+sapply(pc.l2, cvi, b = labels)
+```
+
+
+```{r}
+hc.l2 <- tsclust(series, type = "hierarchical",
+k = 4L, trace = TRUE,
+control = hierarchical_control(method = "all",
+distmat = pc.l2[[1L]]@distmat))
+# Plot the best dendrogram according to variation of information
+plot(hc.l2[[which.min(sapply(hc.l2, cvi, b = labels, type = "VI"))]])
+```

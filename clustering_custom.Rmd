@@ -1,0 +1,287 @@
+---
+title: "Untitled"
+author: '9240'
+date: "08/05/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+# imports
+library(rpart)
+library(caret)
+library(ggplot2)
+library(Rtsne)
+library(dplyr)
+library(tidyr)
+library(corrplot)
+library(cluster)
+library(pheatmap)
+library(factoextra)
+library(FactoMineR)
+library(mclust)
+# library(e1071) # provides soft clustering algos
+library(tidyr)
+# library(data.table)
+library(dbscan)
+library(fpc)
+# library(RANN)
+library(TSclust)
+set.seed(42)
+```
+
+
+# Algorithm
+- create NxN similarity matrix
+- for each TS var:
+      - calculate similarity matrix based on a distance measure
+      - append to main similarity matrix
+- divide similarity matrix my len(vars)
+- produce network graph
+- cluster graph
+
+```{r}
+#' Clustering Using Custom Algo
+#'
+#' @param vars 
+#' @param incomes 
+#' @param k 
+#' @param metric 
+#'
+#' @return Confusion Matrix Statistics and Computed Classes
+#' @export
+#'
+#' @examples
+cluster_custom <- function(vars, incomes, k, metric, dataset) {
+  
+  # Load data
+  data <- read.csv(file=paste("./data/", dataset, sep=""))
+  x_diss = NA
+  x_diss_2 = NA
+  actual_incomes = 0
+  iso_order <- 0
+  
+  tot <- NA
+  tot_2 <- NA
+  first_run <- TRUE
+  
+  for (var in vars) {
+    x <- data[data$varnum == var,]
+    
+    # standardise
+    x$median <- scale(x$median)
+    
+    # select income groups to analyse
+    x <- x[x$income %in% c('1','3'),]
+    
+    x <- x[c('iso3', 'year', 'median')]
+    
+    # reshape
+    x <- reshape(x, idvar = "iso3", timevar="year", direction = "wide")
+    rownames(x) <- x$iso3
+    x <- x[,c('median.1990', 'median.1995', 'median.2000', 'median.2005', 'median.2010', 'median.2015', 'median.2018')]
+  
+    iso_order <- rownames(x)
+    x <- as.matrix(sapply(x, as.numeric))
+    
+    # calc dissimilarity
+    x_diss <- diss(x, metric)
+    x_diss_2 <- x_diss
+    x_diss <- as.matrix(x_diss)
+    
+    if (first_run) {
+      tot <- x_diss
+      tot_2 <- x_diss_2
+      first_run <- FALSE
+    } else {
+      tot <- tot + x_diss
+      tot_2 <- tot_2 + x_diss_2
+    }
+  }
+  
+  # apply PAM clustering
+  pam.res <- pam(tot, k)
+  resc <- pam.res$clustering
+  resc <- as.data.frame(resc)
+  rownames(resc) <- iso_order
+  
+  # apply hierarchical clustering
+  clusters <- hclust(tot_2, method="ward.D")
+  # plot(clusters)
+  hclabels <- cutree(clusters, k=2)
+
+  # retrieve actual income values
+  resc$income <- NA
+  for(country in rownames(resc)) {
+     resc[country,]$income <- data[data$iso3==country,]$income[1]
+  }
+  resc[resc$income==3,]$income <- 2
+  
+  resc$not_equal <- NA
+  resc$not_equal <- resc$resc==resc$income
+  
+  # results
+  confusionMatrix(as.factor(resc$resc), as.factor(resc$income))$overall['Accuracy']
+  cf <- confusionMatrix(as.factor(resc$resc), as.factor(resc$income))
+  resList <- list("cf" = cf, "df" = resc, "hclabels"=as.factor(hclabels), "truth"=as.factor(resc$income))
+  return(resList)
+}
+```
+
+Run This
+Common in rich countries: 15, 54
+```{r}
+test_res <- cluster_custom(c(100, 6), c(1, 3), 2, "CORT", "data_female_0.csv")
+
+# PAM
+source("utils.R", local = knitr::knit_global())
+# get_results(as.factor(test_res$df$resc), as.factor(test_res$truth))
+
+# hclust
+print("hclust")
+get_results(test_res$hclabels, as.factor(test_res$truth))
+```
+
+```{r}
+a <- get_results(test_res$hclabels, as.factor(test_res$truth))
+```
+
+
+# Test out different metrics
+```{r}
+source("utils.R", local = knitr::knit_global())
+
+metrics <- c("ACF", "AR.PIC", "CDM", "COR", "CORT", "DTWARP", "EUCL", "INT.PER", "NCD", "PACF", "PER")
+
+cluster_results <- c()
+
+# initial a df for results
+df <- data.frame(
+  "Algo"= character(),
+  "Distance Metric"= character(),
+  "Sub Clustering Algo"=character(),
+  "Dataset"=character(),
+  "Accuracy"=numeric(),
+  "Sensitivity"=numeric(),
+  "Specificity"=numeric(),
+  "Rand Index"=numeric(),
+  "Adj Rand Index"=numeric()
+)
+
+for (dataset in c("female_0", "female_1", "all_999")) {
+  for (metric in metrics) {
+    res <- cluster_custom(c(100, 6), c(1, 3), 2, metric, paste("data_", dataset, ".csv", sep="")) 
+    print(metric)
+    
+    # first PAM
+    res_pam <- get_results(as.factor(res$df$resc), as.factor(res$truth))
+    df[nrow(df)+1,] <- c(
+      "Custom", 
+      metric, 
+      "PAM", 
+      dataset, 
+      res_pam$cfm$overall['Accuracy'], 
+      res_pam$cfm$byClass['Sensitivity'], 
+      res_pam$cfm$byClass['Specificity'], 
+      res_pam$ri,
+      res_pam$ari
+    )
+    
+    # repeat for HClust
+    res_hclust <- get_results(res$hclabels, as.factor(res$truth))
+    df[nrow(df)+1,] <- c(
+      "Custom", 
+      metric, 
+      "HCLUST",
+      dataset,
+      res_hclust$cfm$overall['Accuracy'],
+      res_hclust$cfm$byClass['Sensitivity'],
+      res_hclust$cfm$byClass['Specificity'],
+      res_hclust$ri,
+      res_hclust$ari
+    )
+  }
+}
+
+df_ordered <- df[order(df$Distance.Metric, df$Sub.Clustering.Algo, df$Dataset),]
+```
+
+High acc: ncd, eucl, dtwarp, cort, cdm
+
+
+
+# Now try with clustering code inside package
+```{r}
+source("utils.R", local = knitr::knit_global())
+source("./customcluster/R/hello.R", local = knitr::knit_global())
+data <- select_data("all_999", c(1, 2, 3), c(100, 6))
+```
+
+```{r}
+result <- customcluster(data, k=2, cluster_algo="HCLUST")
+get_results(result$result, result$income)
+```
+
+
+```{r}
+source("./customcluster/R/hello.R", local = knitr::knit_global())
+data <- select_data("all_999", c(3, 6), c(100, 6, 4, 5, 2, 5))
+result <- customcluster(data, k=2, cluster_algo="PAM", dist_metric="")
+
+print(result$income)
+
+get_results(result$result, result$income)
+```
+1, 6 good
+3, 6 bad
+1, 2, 3 
+```{r}
+source("utils.R", local = knitr::knit_global())
+
+metrics <- c("ACF", "AR.PIC", "CDM", "COR", "CORT", "DTWARP", "EUCL", "INT.PER", "NCD", "PACF", "PER")
+
+cluster_results <- c()
+
+# initial a df for results
+df <- data.frame(
+  "Algo"= character(),
+  "Distance Metric"= character(),
+  "Sub Clustering Algo"=character(),
+  "Dataset"=character(),
+  "Accuracy"=numeric(),
+  "Sensitivity"=numeric(),
+  "Specificity"=numeric(),
+  "Rand Index"=numeric(),
+  "Adj Rand Index"=numeric()
+)
+
+for (dataset in c("all_999")) {
+  print(dataset)
+  data <- select_data(dataset, c(1, 2, 3), c(100, 6))
+  for (metric in metrics) {
+    print(metric)
+    res <- customcluster(data, k=3, cluster_algo="PAM", dist_metric=metric)
+    res_pam <- get_results(res$result, res$income)
+    print(res_pam$cfm$overall['Accuracy'])
+    df[nrow(df)+1,] <- c(
+      "Custom", 
+      metric, 
+      "PAM", 
+      dataset, 
+      res_pam$cfm$overall['Accuracy'], 
+      res_pam$cfm$byClass['Sensitivity'], 
+      res_pam$cfm$byClass['Specificity'], 
+      res_pam$ri,
+      res_pam$ari
+    )
+  }
+}
+
+df_ordered <- df[order(df$Distance.Metric, df$Sub.Clustering.Algo, df$Dataset),]
+```
+
