@@ -1,10 +1,10 @@
-# Multivariate Time Series Cluster Analysis
-This repo can be used to reproduce results. It comprises of R code (in RMarkdown files).
+# Multivariate Time Series Cluster Analysis of Nutrition Data
+This repository can be used to reproduce the paper results. It comprises of R code (in RMarkdown files).
 
 ## Manual Installation
-Ensure the necessary submodules are installed!
-
-Ensure you have R Studio installed and proceed to open the R Markdown files. Hit ``Run > Run All`` to execute the code. Start with the file [download_and_prep.Rmd](download_and_prep.Rmd).
+- Download the repository ZIP, or in your Terminal type `git clone https://github.com/nutrition-data/mts-clustering-analysis-gdd.git`. 
+- Ensure you have R Studio installed and proceed to open the R Markdown files. 
+- Hit ``Run > Run All`` to execute the code. Start with the file [download_and_prep.Rmd](download_and_prep.Rmd).
 
 ## Custom Packages
 - `customcluster`: implementation of the custom multivariate time series clustering program.
@@ -12,8 +12,8 @@ Ensure you have R Studio installed and proceed to open the R Markdown files. Hit
 These can be found in their respective folders.
 
 ### Files
-There are several Rmd files each of which performs a distinct role:
-The [download_and_prep.Rmd](download_and_prep.Rmd) script combines all main data sources into single csv ``/data/data_all_999.csv``. This script also generates nutritional data for the stratified variables (e.g. `data_female_0.csv` and `data_female_1.csv`).
+There are several Rmd files each of which performs a distinct role:  
+- [download_and_prep.Rmd](download_and_prep.Rmd): This script combines all main data sources into single csv ``/data/data_all_999.csv``. This script also generates nutritional data for the stratified variables (e.g. `data_female_0.csv` and `data_female_1.csv`).
 - [utils.R](utils.R): Several utility functions including a wrapper for DTW clustering.
 - [exploratory.Rmd](exploratory.Rmd): an initial exploration of the data.
 - [clustering_example_dtw.Rmd](clustering_example_dtw.Rmd): a test of multivariate time series clustering using Dynamic Time Warping distance and dummy data.
